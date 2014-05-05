@@ -4,7 +4,7 @@
 ZMQ/Protobuf Websocket Adapter 1.0
 
 Usage:
-    zpws [--port=<port>] [--pretty] [--sub | --pull] PROTO URL...
+    zpws [--host=<host>] [--port=<port>] [--index=<file>] [--pretty] [--sub | --pull] PROTO URL...
     zpws (-h|--help)
 
 Arguments:
@@ -12,14 +12,37 @@ Arguments:
     PROTO            Generated Protobuf package
 
 Options:
-    --port=<port>    Websocket Port
+    --host=<host>    Server listening host [default: 127.0.0.1]
+    --port=<port>    Server listening port [default: 8080]
+    --index=<file>   Webserver index page
     --pretty         Pretty-printing of JSON output
-    --sub            SUB type ZMQ Socket (default)
+    --sub            SUB type ZMQ Socket [default]
     --pull           PULL type ZMQ Socket
 """
 
 from docopt import docopt
+
+import socket
 import zmq
+import cherrypy
+from ws4py.websocket import WebSocket
+
+class ProtobufWebSocketHandler(WebSocket):
+    def opened(self):
+        self.zmq_socket = cherrypy.thread_data.zmq_socket
+        self.proto_resolver = cherrypy.thread_data.proto_resolver
+
+    def once(self):
+        if self.terminated:
+            return false
+
+        frames = self.zmq_socket.recv_multipart()
+        message_type = self.proto_resolver(frames)
+
+        message = message_type.FromString(frames[-1])
+
+        cherrypy.engine.publish('websocket-broadcast', str(message))
+        return True
 
 def make_socket(context, urls, kind = zmq.SUB):
     sock = context.socket(kind)
@@ -28,9 +51,30 @@ def make_socket(context, urls, kind = zmq.SUB):
 
     return sock
 
+def make_simple_resolver(proto, frame):
+    def _impl(frames):
+        message_type = getattr(proto, frames[frame])
+        if not isinstance(message_type, google.protobuf.message.Message):
+            raise ValueError("Invalid message type <{}>.".format(message_type.__class__.__name__))
+
+    return _impl
+
+def start_server(host, port, index = None):
+    cherrypy.quickstart(Root(host, port), '', config = {
+        '/ws': {
+            'tools.websocket.on': True,
+            'tools.websocket.handler_cls': ProtobufWebSocketHandler
+        }
+    })
+
 if __name__ == "__main__":
     arguments = docopt(__doc__, version="ZMQ/Protobuf Websocket Adapter 1.0")
     print(arguments)
 
+    host = socket.gethostbyname(arguments['--host']),
+    port = int(arguments['--port']),
+    index = open(arguments['--index']) if arguments['--index'] is not None else None,
+    socket_kind = zmq.PULL if arguments['--pull'] else zmq.SUB
+
     context = zmq.Context()
-    sock = make_socket(context, arguments['URL'], zmq.PULL if arguments['--pull'] else zmq.SUB)
+    sock = make_socket(context, arguments['URL'], socket_kind)

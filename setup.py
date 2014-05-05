@@ -6,6 +6,6 @@ setup(
 	description='ZMQ-Protobuf Websocket Bridge',
 	packages=find_packages(),
 	scripts=['scripts/zpws'],
-	install_requires=['pyzmq', 'protobuf', 'ws4py', 'docopt']
+	install_requires=['pyzmq', 'protobuf', 'cherrypy', 'ws4py', 'docopt']
 )
 
