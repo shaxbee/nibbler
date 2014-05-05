@@ -1,0 +1,36 @@
+#!/usr/bin/env python
+
+"""
+ZMQ/Protobuf Websocket Adapter 1.0
+
+Usage:
+    zpws [--port=<port>] [--pretty] [--sub | --pull] PROTO URL...
+    zpws (-h|--help)
+
+Arguments:
+    URL              ZMQ socket URL
+    PROTO            Generated Protobuf package
+
+Options:
+    --port=<port>    Websocket Port
+    --pretty         Pretty-printing of JSON output
+    --sub            SUB type ZMQ Socket (default)
+    --pull           PULL type ZMQ Socket
+"""
+
+from docopt import docopt
+import zmq
+
+def make_socket(context, urls, kind = zmq.SUB):
+    sock = context.socket(kind)
+    for url in urls:
+        sock.connect(url)
+
+    return sock
+
+if __name__ == "__main__":
+    arguments = docopt(__doc__, version="ZMQ/Protobuf Websocket Adapter 1.0")
+    print(arguments)
+
+    context = zmq.Context()
+    sock = make_socket(context, arguments['URL'], zmq.PULL if arguments['--pull'] else zmq.SUB)

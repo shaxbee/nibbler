@@ -1,10 +1,11 @@
-from distutils.core import setup
+from setuptools import setup, find_packages
 
 setup(
 	name='zmqprotows',
 	version='1.0',
 	description='ZMQ-Protobuf Websocket Bridge',
-	packages=['zmqprotows', 'zmqprotows.cherrypy'],
-	requires=['pyzmq', 'protobuf', 'ws4py']
+	packages=find_packages(),
+	scripts=['scripts/zpws'],
+	install_requires=['pyzmq', 'protobuf', 'ws4py', 'docopt']
 )
 
