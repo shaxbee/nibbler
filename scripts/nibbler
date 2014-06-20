@@ -22,6 +22,7 @@ Options:
 
 import socket
 from functools import partial
+from collections import deque
 from importlib import import_module
 
 import zmq
@@ -30,25 +31,76 @@ import google.protobuf
 from ws4py.websocket import WebSocket
 
 
+def consume_deque(q):
+    while True:
+        try:
+            yield q.popleft()
+        except IndexError:
+            break
+
+
+class ProtobufWebSocketWorker(object):
+    def __init__(self):
+        self.add_queue = deque()
+        self.remove_queue = deque()
+        self.clients = {}
+        self.sockets = {}
+
+    def add(self, client):
+        self.add_queue.append(client)
+
+    def remove(self, client):
+        self.remove_queue.append(client)
+
+    def process(self):
+        for client in consume_deque(self.remove_queue):
+            socket = self.sockets.pop(client)
+            self.clients.pop(socket)
+            socket.close()
+
+        for client in consume_deque(self.add_queue):
+            socket = self.socket_factory()
+            self.sockets[client] = socket
+            self.clients[socket] = client
+
+        read, _, _ = zmq.select(self.sockets, [], [], self.timeout)
+
+        for socket in read:
+            frames = socket.recv_multipart()
+            message_type = self.proto_resolver(frames)
+            message = message_type.FromString(frames[self.payload_frame])
+
+
 class ProtobufWebSocketHandler(WebSocket):
-    def __init__(self, socket_factory, proto_resolver, payload_frame=-1):
+    def __init__(self, socket_factory, proto_resolver, payload_frame, *args, **kwargs):
+        WebSocket.__init__(self, *args, **kwargs)
+
         self.socket_factory = socket_factory
         self.proto_resolver = proto_resolver
         self.payload_frame = payload_frame
 
     def opened(self):
+        self.socket.setblocking(False)
         self.zmq_socket = self.socket_factory()
 
+    def closed(self, code, reason):
+        self.zmq_socket.close()
+
     def once(self):
-        if self.terminated:
+        if not WebSocket.once(self):
             return False
+
+        if self.zmq_socket.poll(10) != zmq.POLLIN:
+            return True
 
         frames = self.zmq_socket.recv_multipart()
         message_type = self.proto_resolver(frames)
+        message = message_type.FromString(frames[self.payload_frame])
 
-        message = message_type.FromString(self.payload_frame)
+        print str(message)
 
-        cherrypy.engine.publish('websocket-broadcast', str(message))
+        self.send(str(message))
+
         return True
 
 
@@ -57,30 +109,37 @@ def make_socket(context, urls, kind=zmq.SUB):
     for url in urls:
         sock.connect(url)
 
+    if kind is zmq.SUB:
+        sock.setsockopt(zmq.SUBSCRIBE, '')
+
     return sock
 
 
 def make_simple_resolver(proto, frame):
     def _impl(frames):
         message_type = getattr(proto, frames[frame])
-        if not isinstance(message_type, google.protobuf.message.Message):
+        if not isinstance(message_type, (google.protobuf.message.Message, google.protobuf.reflection.GeneratedProtocolMessageType)):
             raise ValueError("Invalid message type <{}>.".format(message_type.__class__.__name__))
+        return message_type
 
     return _impl
 
 
-def make_server_config(socket_factory, proto_resolver, path='/ws'):
+def make_server_config(socket_factory, proto_resolver, path='/', payload_frame=-1):
     return {
         path: {
             'tools.websocket.on': True,
-            'tools.websocket.handler_cls': partial(ProtobufWebSocketHandler, socket_factory, proto_resolver)
+            'tools.websocket.handler_cls': partial(ProtobufWebSocketHandler, socket_factory, proto_resolver, payload_frame)
         }
     }
 
 
 if __name__ == "__main__":
+    import os
+    import sys
     import pkgutil
     import docopt
+    import ws4py.server.cherrypyserver as server
 
     arguments = docopt.docopt(__doc__, version="Nibbler 1.0")
 
@@ -92,6 +151,9 @@ if __name__ == "__main__":
     context = zmq.Context()
 
     socket_factory = partial(make_socket, context, arguments['URL'], socket_kind)
+
+    # add current working directory for user-defined proto module import
+    sys.path.append(os.getcwd())
     proto_module = import_module(arguments['PROTO'])
     proto_resolver = make_simple_resolver(proto_module, 0)
 
@@ -107,4 +169,7 @@ if __name__ == "__main__":
         'server.socket_port': port
     })
 
-    cherrypy.quickstart(Root())
+    server.WebSocketPlugin(cherrypy.engine).subscribe()
+    cherrypy.tools.websocket = server.WebSocketTool()
+
+    cherrypy.quickstart(Root(), config=server_config)

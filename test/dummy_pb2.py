@@ -11,34 +11,34 @@ from google.protobuf import descriptor_pb2
 DESCRIPTOR = descriptor.FileDescriptor(
   name='dummy.proto',
   package='',
-  serialized_pb='\n\x0b\x64ummy.proto\";\n\x05Peron\x12\x12\n\nfirst_name\x18\x01 \x01(\t\x12\x11\n\tlast_name\x18\x02 \x01(\t\x12\x0b\n\x03\x61ge\x18\x03 \x01(\r')
+  serialized_pb='\n\x0b\x64ummy.proto\"<\n\x06Person\x12\x12\n\nfirst_name\x18\x01 \x01(\t\x12\x11\n\tlast_name\x18\x02 \x01(\t\x12\x0b\n\x03\x61ge\x18\x03 \x01(\r')
 
 
 
 
-_PERON = descriptor.Descriptor(
-  name='Peron',
-  full_name='Peron',
+_PERSON = descriptor.Descriptor(
+  name='Person',
+  full_name='Person',
   filename=None,
   file=DESCRIPTOR,
   containing_type=None,
   fields=[
     descriptor.FieldDescriptor(
-      name='first_name', full_name='Peron.first_name', index=0,
+      name='first_name', full_name='Person.first_name', index=0,
       number=1, type=9, cpp_type=9, label=1,
       has_default_value=False, default_value=unicode("", "utf-8"),
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
       options=None),
     descriptor.FieldDescriptor(
-      name='last_name', full_name='Peron.last_name', index=1,
+      name='last_name', full_name='Person.last_name', index=1,
       number=2, type=9, cpp_type=9, label=1,
       has_default_value=False, default_value=unicode("", "utf-8"),
       message_type=None, enum_type=None, containing_type=None,
       is_extension=False, extension_scope=None,
       options=None),
     descriptor.FieldDescriptor(
-      name='age', full_name='Peron.age', index=2,
+      name='age', full_name='Person.age', index=2,
       number=3, type=13, cpp_type=3, label=1,
       has_default_value=False, default_value=0,
       message_type=None, enum_type=None, containing_type=None,
@@ -54,15 +54,15 @@ _PERON = descriptor.Descriptor(
   is_extendable=False,
   extension_ranges=[],
   serialized_start=15,
-  serialized_end=74,
+  serialized_end=75,
 )
 
-DESCRIPTOR.message_types_by_name['Peron'] = _PERON
+DESCRIPTOR.message_types_by_name['Person'] = _PERSON
 
-class Peron(message.Message):
+class Person(message.Message):
   __metaclass__ = reflection.GeneratedProtocolMessageType
-  DESCRIPTOR = _PERON
+  DESCRIPTOR = _PERSON
   
-  # @@protoc_insertion_point(class_scope:Peron)
+  # @@protoc_insertion_point(class_scope:Person)
 
 # @@protoc_insertion_point(module_scope)
