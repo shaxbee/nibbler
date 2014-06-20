@@ -9,7 +9,7 @@ Usage:
 
 Arguments:
     URL              ZMQ socket URL
-    PROTO            Generated Protobuf package
+    PROTO            Generated Protobuf module
 
 Options:
     --host=<host>    Server listening host [default: 127.0.0.1]
@@ -23,18 +23,26 @@ Options:
 from docopt import docopt
 
 import socket
+from functools import partial
+from importlib import import_module
+
 import zmq
 import cherrypy
+import google.protobuf
 from ws4py.websocket import WebSocket
 
+
 class ProtobufWebSocketHandler(WebSocket):
+    def __init__(self, socket_factory, proto_resolver):
+        self.socket_factory = socket_factory
+        self.proto_resolver = proto_resolver
+
     def opened(self):
-        self.zmq_socket = cherrypy.thread_data.zmq_socket
-        self.proto_resolver = cherrypy.thread_data.proto_resolver
+        self.zmq_socket = self.socket_factory()
 
     def once(self):
         if self.terminated:
-            return false
+            return False
 
         frames = self.zmq_socket.recv_multipart()
         message_type = self.proto_resolver(frames)
@@ -44,12 +52,14 @@ class ProtobufWebSocketHandler(WebSocket):
         cherrypy.engine.publish('websocket-broadcast', str(message))
         return True
 
-def make_socket(context, urls, kind = zmq.SUB):
+
+def make_socket(context, urls, kind=zmq.SUB):
     sock = context.socket(kind)
     for url in urls:
         sock.connect(url)
 
     return sock
+
 
 def make_simple_resolver(proto, frame):
     def _impl(frames):
@@ -59,13 +69,14 @@ def make_simple_resolver(proto, frame):
 
     return _impl
 
-def start_server(host, port, index = None):
-    cherrypy.quickstart(Root(host, port), '', config = {
+
+def make_server_config(socket_factory, proto_resolver):
+    return {
         '/ws': {
             'tools.websocket.on': True,
-            'tools.websocket.handler_cls': ProtobufWebSocketHandler
+            'tools.websocket.handler_cls': partial(ProtobufWebSocketHandler, socket_factory, proto_resolver)
         }
-    })
+    }
 
 if __name__ == "__main__":
     arguments = docopt(__doc__, version="ZMQ/Protobuf Websocket Adapter 1.0")
@@ -77,4 +88,9 @@ if __name__ == "__main__":
     socket_kind = zmq.PULL if arguments['--pull'] else zmq.SUB
 
     context = zmq.Context()
-    sock = make_socket(context, arguments['URL'], socket_kind)
+
+    socket_factory = partial(make_socket, context, arguments['URL'], socket_kind)
+    proto_module = import_module(arguments['PROTO'])
+    proto_resolver = make_simple_resolver(proto_module, 0)
+
+    server_config = make_server_config(socket_factory, proto_resolver)
