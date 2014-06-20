@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 
 """
-ZMQ/Protobuf Websocket Adapter 1.0
+ZMQ/Protobuf Websocket Bridge.
 
 Usage:
     zpws [--host=<host>] [--port=<port>] [--index=<file>] [--pretty] [--sub | --pull] PROTO URL...
@@ -70,16 +70,17 @@ def make_simple_resolver(proto, frame):
     return _impl
 
 
-def make_server_config(socket_factory, proto_resolver):
+def make_server_config(path, socket_factory, proto_resolver):
     return {
-        '/ws': {
+        path: {
             'tools.websocket.on': True,
             'tools.websocket.handler_cls': partial(ProtobufWebSocketHandler, socket_factory, proto_resolver)
         }
     }
 
+
 if __name__ == "__main__":
-    arguments = docopt(__doc__, version="ZMQ/Protobuf Websocket Adapter 1.0")
+    arguments = docopt(__doc__, version="Nibbler 1.0")
     print(arguments)
 
     host = socket.gethostbyname(arguments['--host']),
