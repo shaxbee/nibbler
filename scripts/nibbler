@@ -77,7 +77,7 @@ class ProtobufWebSocketPlugin(SimplePlugin):
             message_type = self.proto_resolver(frames)
             message = message_type.FromString(frames[self.payload_frame])
 
-            cherrypy.engine.publish('websocket-broadcast', TextMessage("Hello World!"))
+            cherrypy.engine.publish('websocket-broadcast', TextMessage(str(message)))
 
 
 def make_simple_resolver(proto, frame):
