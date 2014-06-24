@@ -9,5 +9,5 @@ setup(
     package_data={'nibbler': ['static/*']},
     scripts=['scripts/nibbler'],
     setup_requires=['nose>=1.0'],
-    install_requires=['pyzmq', 'protobuf', 'cherrypy', 'ws4py', 'docopt']
+    install_requires=['pyzmq', 'protobuf', 'cherrypy', 'ws4py', 'docopt', 'bidict']
 )
