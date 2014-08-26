@@ -12,25 +12,45 @@ Arguments:
     PROTO            Generated Protobuf module
 
 Options:
-    --host=<host>    Server listening host [default: 127.0.0.1]
-    --port=<port>    Server listening port [default: 8080]
-    --index=<file>   Webserver index page
-    --pretty         Pretty-printing of JSON output
+    --host=<host>          Server listening host [default: 127.0.0.1]
+    --port=<port>          Server listening port [default: 8080]
+    --index=<file>         Webserver index page
+    --pretty               Pretty-printing of JSON output
+    --envelope=<envelope>  Envelope for JSON output [default: identity]
+
+Available envelope types: identity, basic
 """
 
 import socket
 from importlib import import_module
 from threading import Thread, Event, RLock
+from collections import deque
 
 import zmq
 import cherrypy
 import google.protobuf
 import json
+from bidict import bidict
 
 from ws4py.websocket import WebSocket
 from ws4py.messaging import TextMessage
 from cherrypy.process.plugins import SimplePlugin
 
+
+def consume_deque(queue):
+    while True:
+        try:
+            yield queue.pop()
+        except IndexError, e:
+            return
+
+
+def consume_zmq_socket(sock):
+    while True:
+        try:
+            yield sock.recv_multipart(flags=zmq.NOBLOCK)
+        except zmq.ZMQError, e:
+            return
 
 class JSONProtobufEncoder(json.JSONEncoder):
     def default(self, obj):
@@ -42,33 +62,28 @@ class JSONProtobufEncoder(json.JSONEncoder):
             return json.JSONEncoder.default(self, obj)
 
 
-class SynchronizedWebSocket(WebSocket):
-    def __init__(self, *args, **kwargs):
-        WebSocket.__init__(self, *args, **kwargs)
-        self.lock = RLock()
+class NibblerWebSocket(WebSocket):
+    def opened(self):
+        cherrypy.engine.publish('nibbler-add-client', self)
 
-    def send(self, payload, binary=False):
-        with self.lock:
-            WebSocket.send(self, payload, binary)
+    def closed(self):
+        cherrypy.engine.publish('nibbler-del-client', self)
 
-    def once(self):
-        with self.lock:
-            WebSocket.once(self)
 
 class ProtobufWebSocketPlugin(SimplePlugin):
-    def __init__(self, bus, context, urls, proto_resolver, payload_frame=-1):
+    def __init__(self, bus, context, urls, transcoder):
         SimplePlugin.__init__(self, bus)
 
         self.context = context
         self.urls = urls
-        self.proto_resolver = proto_resolver
-        self.payload_frame = payload_frame
+        self.transcoder = transcoder
 
-        self.clients = set()
         self.finished = Event()
 
-    def start(self):
-        self.finished.clear()
+        self.queue = deque()
+
+        bus.subscribe('nibbler-add-client', lambda client: self.queue.append(('add', client)))
+        bus.subscribe('nibbler-del-client', lambda client: self.queue.append(('del', client)))
 
         self.thread = Thread(name=ProtobufWebSocketPlugin.__name__, target=self.run)
         self.thread.start()
@@ -79,23 +94,68 @@ class ProtobufWebSocketPlugin(SimplePlugin):
         self.thread = None
 
     def run(self):
-        self.socket = self.context.socket(zmq.SUB)
+        proto_frontend = self.context.socket(zmq.SUB)
         for url in self.urls:
-            self.socket.connect(url)
+            proto_frontend.connect(url)
 
-        self.socket.setsockopt(zmq.SUBSCRIBE, '')
+        proto_frontend.setsockopt(zmq.SUBSCRIBE, '')
+
+        json_backend = self.context.socket(zmq.PUB)
+        json_backend.bind("inproc://#json")
+        json_endpoint = json_backend.getsockopt(zmq.LAST_ENDPOINT)
+
+        clients = bidict()
+        poller = zmq.Poller()
 
         while not self.finished.is_set():
-            if self.socket.poll(100, zmq.POLLIN) != zmq.POLLIN:
+            for (action, client) in consume_deque(self.queue):
+                if action == 'add':
+                    sock = self.context.socket(zmq.SUB)
+                    sock.connect(json_endpoint)
+                    # TODO: build list of topics based on query string
+                    sock.setsockopt(zmq.SUBSCRIBE, '')
+                    poller.register(sock, flags=zmq.POLLIN)
+                    clients[client] = sock
+                elif action == 'del':
+                    sock = clients.pop(client)
+                    sock.close()
+
+            if proto_frontend.poll(100, zmq.POLLIN) != zmq.POLLIN:
                 continue
 
-            frames = self.socket.recv_multipart()
-            message_type = self.proto_resolver(frames)
-            message = message_type.FromString(frames[self.payload_frame])
+            frames = proto_frontend.recv_multipart()
+            json_backend.send_multipart(self.transcoder(frames))
 
-            serialized = json.dumps(message, cls=JSONProtobufEncoder)
+            for (sock, _) in poller.poll(100):
+                client = clients[:sock]
+                for (_, message) in consume_zmq_socket(sock):
+                    client.send(message)
 
-            cherrypy.engine.publish('websocket-broadcast', serialized)
+
+def no_envelope(topic, message_type, message):
+    return message
+
+
+def basic_envelope(topic, message_type, message):
+    return {
+        'topic': topic,
+        'message_type': str(message_type.DESCRIPTOR.name),
+        'message': message
+    }
+
+
+def make_transcoder(proto_resolver, payload_frame=-1, envelope=no_envelope, pretty_print=True):
+    indent = 4 if pretty_print else None
+
+    def transcoder(frames):
+        topic = frames[0]
+        message_type = proto_resolver(frames)
+        message = message_type.FromString(frames[payload_frame])
+        message_json = json.dumps(envelope(topic, message_type, message), cls=JSONProtobufEncoder, indent=indent)
+
+        return (topic, message_json)
+    
+    return transcoder
 
 
 def make_simple_resolver(proto, frame):
@@ -127,9 +187,10 @@ if __name__ == "__main__":
     sys.path.append(os.getcwd())
     proto_module = import_module(arguments['PROTO'])
     proto_resolver = make_simple_resolver(proto_module, 0)
+    transcoder = make_transcoder(proto_resolver, pretty_print=arguments['--pretty'])
 
     WebSocketPlugin(cherrypy.engine).subscribe()
-    ProtobufWebSocketPlugin(cherrypy.engine, context, arguments['URL'], proto_resolver).subscribe()
+    ProtobufWebSocketPlugin(cherrypy.engine, context, arguments['URL'], transcoder).subscribe()
 
     class Root(object):
         @cherrypy.expose
@@ -150,6 +211,6 @@ if __name__ == "__main__":
     cherrypy.quickstart(Root(), config={
         '/ws': {
             'tools.websocket.on': True,
-            'tools.websocket.handler_cls': SynchronizedWebSocket
+            'tools.websocket.handler_cls': NibblerWebSocket
         }
     })
